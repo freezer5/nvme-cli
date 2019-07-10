@@ -2149,6 +2149,90 @@ void nvme_feature_show_fields(__u32 fid, unsigned int result, unsigned char *buf
 	}
 }
 
+static void show_pcie_list_item(struct list_item list_item)
+{
+	printf("%-16s %-*.*s %-*.*s %-9d %12s\n", list_item.node,
+            (int)sizeof(list_item.ctrl.sn), (int)sizeof(list_item.ctrl.sn), list_item.ctrl.sn,
+            (int)sizeof(list_item.ctrl.mn), (int)sizeof(list_item.ctrl.mn), list_item.ctrl.mn,
+            list_item.nsid, list_item.pci_bdf);
+}
+
+void show_pcie_list_items(struct list_item *list_items, unsigned len)
+{
+	unsigned i;
+
+	printf("%-16s %-20s %-40s %-9s %-12s\n",
+	    "Node", "SN", "Model", "Namespace", "PCI Address");
+	printf("%-16s %-20s %-40s %-9s %-12s\n",
+            "----------------", "--------------------", "----------------------------------------",
+            "---------", "------------");
+	for (i = 0 ; i < len ; i++)
+		show_pcie_list_item(list_items[i]);
+
+}
+
+void json_print_pcie_list_items(struct list_item *list_items, unsigned len)
+{
+	struct json_object *root;
+	struct json_array *devices;
+	struct json_object *device_attrs;
+	char formatter[41] = { 0 };
+	int index, i = 0;
+	char *product;
+
+	root = json_create_object();
+	devices = json_create_array();
+	for (i = 0; i < len; i++) {
+		device_attrs = json_create_object();
+
+	    json_object_add_value_int(device_attrs,
+	                              "NameSpace",
+	                              list_items[i].nsid);
+
+		json_object_add_value_string(device_attrs,
+					     "DevicePath",
+					     list_items[i].node);
+
+		json_object_add_value_string(device_attrs,
+					     "PCIAddress",
+					     list_items[i].pci_bdf);
+
+		if (sscanf(list_items[i].node, "/dev/nvme%d", &index) == 1)
+			json_object_add_value_int(device_attrs,
+						  "Index",
+						  index);
+
+		format(formatter, sizeof(formatter),
+		       list_items[i].ctrl.mn,
+		       sizeof(list_items[i].ctrl.mn));
+
+		json_object_add_value_string(device_attrs,
+					     "ModelNumber",
+					     formatter);
+
+		product = nvme_product_name(index);
+
+		json_object_add_value_string(device_attrs,
+					     "ProductName",
+					     product);
+
+		format(formatter, sizeof(formatter),
+		       list_items[i].ctrl.sn,
+		       sizeof(list_items[i].ctrl.sn));
+
+		json_object_add_value_string(device_attrs,
+					     "SerialNumber",
+					     formatter);
+
+		json_array_add_value_object(devices, device_attrs);
+
+		free((void*)product);
+	}
+	if (i)
+		json_object_add_value_array(root, "Devices", devices);
+	json_print_object(root, NULL);
+}
+
 static void show_list_item(struct list_item list_item)
 {
 	long long int lba = 1 << list_item.ns.lbaf[(list_item.ns.flbas & 0x0f)].ds;

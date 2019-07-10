@@ -36,6 +36,7 @@ void show_sanitize_log(struct nvme_sanitize_log_page *sanitize, unsigned int mod
 void show_ctrl_registers(void *bar, unsigned int mode, bool fabrics);
 void show_single_property(int offset, uint64_t prop, int human);
 void show_nvme_id_ns_descs(void *data);
+void show_pcie_list_items(struct list_item *list_items, unsigned len);
 void show_list_items(struct list_item *list_items, unsigned len);
 void show_nvme_subsystem_list(struct subsys_list_item *slist, int n);
 void show_nvme_id_nvmset(struct nvme_id_nvmset *nvmset);
@@ -61,6 +62,7 @@ void json_fw_log(struct nvme_firmware_log_page *fw_log, const char *devname);
 void json_changed_ns_list_log(struct nvme_changed_ns_list_log *log, const char *devname);
 void json_endurance_log(struct nvme_endurance_group_log *endurance_group,
 			__u16 group_id, const char *devname);
+void json_print_pcie_list_items(struct list_item *items, unsigned amnt);
 void json_print_list_items(struct list_item *items, unsigned amnt);
 void json_nvme_id_ns_descs(void *data);
 void json_print_nvme_subsystem_list(struct subsys_list_item *slist, int n);
