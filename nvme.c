@@ -44,6 +44,7 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/time.h>
+#include <sys/sysmacros.h>
 
 #include "common.h"
 #include "nvme-print.h"
@@ -1835,6 +1836,145 @@ static int scan_dev_filter(const struct dirent *d)
 		return 1;
 	}
 	return 0;
+}
+
+static char *path_trim_last(char *path, char needle)
+{
+	int i;
+	i = strlen(path);
+	if (i>0 && path[i-1] == needle)		// remove trailing slash
+		path[--i] = 0;
+	for (; i>0; i--)
+		if (path[i] == needle) {
+			path[i] = 0;
+			return path+i+1;
+	}
+	return NULL;
+}
+
+static void get_pci_bdf(char *node, char *bdf)
+{
+	int ret;
+	char path[264], nodetmp[264];
+	struct stat st;
+	char *p;
+
+	bdf[0] = 0;
+	strcpy(nodetmp, node);
+	p = path_trim_last(nodetmp, '/');
+	sprintf(path, "/sys/block/%s/device", p);
+	ret = readlink(path, nodetmp, sizeof(nodetmp));
+	if (ret <= 0)
+		return;
+	nodetmp[ret] = 0;
+	// The link value is either "device -> ../../../0000:86:00.0" or "device -> ../../nvme0"
+	(void) path_trim_last(path, '/');
+	sprintf(path+strlen(path), "/%s/device", nodetmp);
+	ret = stat(path, &st);
+	if (ret < 0)
+		return;
+	if ((st.st_mode & S_IFLNK) == 0) {
+		// follow the second link to get the PCI address
+		ret = readlink(path, path, sizeof(path));
+		if (ret <= 0)
+			return;
+		path[ret] = 0;
+	}
+	else
+		(void) path_trim_last(path, '/');
+
+	p = path_trim_last(path, '/');
+	if (p && strlen(p) == 12)
+		strcpy(bdf, p);
+}
+
+static int pcie_list(int argc, char **argv, struct command *cmd, struct plugin *plugin)
+{
+	char path[264];
+	struct dirent **devices;
+	struct list_item *list_items;
+	unsigned int list_cnt = 0;
+	int fmt, ret, fd, i, n;
+	const char *desc = "Retrieve PCI address information for NVMe namespaces";
+	struct config {
+		char *output_format;
+	};
+
+	struct config cfg = {
+		.output_format = "normal",
+	};
+
+	const struct argconfig_commandline_options opts[] = {
+		{"output-format", 'o', "FMT", CFG_STRING, &cfg.output_format, required_argument, "Output Format: normal|json"},
+		{NULL}
+	};
+
+	ret = argconfig_parse(argc, argv, desc, opts, &cfg, sizeof(cfg));
+	if (ret < 0)
+		goto ret;
+
+	fmt = validate_output_format(cfg.output_format);
+
+	if (fmt != JSON && fmt != NORMAL) {
+		ret = -EINVAL;
+		goto ret;
+	}
+
+	n = scandir(dev, &devices, scan_dev_filter, alphasort);
+	if (n < 0) {
+		fprintf(stderr, "no NVMe device(s) detected.\n");
+		ret = n;
+		goto ret;
+	}
+
+	list_items = calloc(n, sizeof(*list_items));
+	if (!list_items) {
+		fprintf(stderr, "can not allocate controller list payload\n");
+		ret = -ENOMEM;
+		goto cleanup_devices;
+	}
+
+	for (i = 0; i < n; i++) {
+		snprintf(path, sizeof(path), "%s%s", dev, devices[i]->d_name);
+		fd = open(path, O_RDONLY);
+		if (fd < 0) {
+			fprintf(stderr, "Failed to open %s: %s\n", path,
+					strerror(errno));
+			ret = -errno;
+			goto cleanup_list_items;
+		}
+		get_pci_bdf(path, list_items[list_cnt].pci_bdf);
+		ret = get_nvme_info(fd, &list_items[list_cnt], path);
+		close(fd);
+		if (ret == 0) {
+			list_cnt++;
+		}
+		else if (ret > 0) {
+			fprintf(stderr, "identify failed\n");
+			show_nvme_status(ret);
+		}
+		else {
+			fprintf(stderr, "%s: failed to obtain nvme info: %s\n",
+					path, strerror(-ret));
+		}
+	}
+
+	if (list_cnt) {
+		if (fmt == JSON)
+			json_print_pcie_list_items(list_items, list_cnt);
+		else
+			show_pcie_list_items(list_items, list_cnt);
+	}
+
+ cleanup_list_items:
+	free(list_items);
+
+ cleanup_devices:
+	for (i = 0; i < n; i++)
+		free(devices[i]);
+	free(devices);
+ ret:
+	return nvme_status_to_errno(ret, false);
 }
 
 static int list(int argc, char **argv, struct command *cmd, struct plugin *plugin)
