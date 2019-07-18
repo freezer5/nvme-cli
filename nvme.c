@@ -1842,10 +1842,8 @@ static char *path_trim_last(char *path, char needle)
 {
 	int i;
 	i = strlen(path);
-	if (i>0 && path[i-1] == needle) {	// remove trailing slash
-		path[i-1] = 0;
-		i--;
-	}
+	if (i>0 && path[i-1] == needle)		// remove trailing slash
+		path[--i] = 0;
 	for (; i>0; i--)
 		if (path[i] == needle) {
 			path[i] = 0;
@@ -1856,29 +1854,35 @@ static char *path_trim_last(char *path, char needle)
 
 static void get_pci_bdf(char *node, char *bdf)
 {
-	struct stat st;
 	int ret;
-	char path[264];
+	char path[264], nodetmp[264];
+	struct stat st;
 	char *p;
 
 	bdf[0] = 0;
-	strcpy(path, node);
-	(void) path_trim_last(path, 'n');
+	strcpy(nodetmp, node);
+	p = path_trim_last(nodetmp, '/');
+	sprintf(path, "/sys/block/%s/device", p);
+	ret = readlink(path, nodetmp, sizeof(nodetmp));
+	if (ret <= 0)
+		return;
+	nodetmp[ret] = 0;
+	// The link value is either "device -> ../../../0000:86:00.0" or "device -> ../../nvme0"
+	(void) path_trim_last(path, '/');
+	sprintf(path+strlen(path), "/%s/device", nodetmp);
 	ret = stat(path, &st);
 	if (ret < 0)
 		return;
-	if ((st.st_mode & S_IFCHR) == 0)
-		return;
-	sprintf(path, "/sys/dev/char/%u:%u", major(st.st_rdev), minor(st.st_rdev));
-	ret = readlink(path, path, sizeof(path));
-	if (ret <= 0)
-		return;
-	// link value should be e.g. "../../devices/pci0000:85/0000:85:00.0/0000:86:00.0/nvme/nvme0"
-	// or "../../devices/pci0000:3a/0000:3a:00.0/0000:3b:00.0/0000:3c:06.0/0000:43:00.0/nvme/nvme0"
-	// we want the last address before the device name
-	path[sizeof(path)-1] = 0;
-	(void) path_trim_last(path, '/');
-	(void) path_trim_last(path, '/');
+	if ((st.st_mode & S_IFLNK) == 0) {
+		// follow the second link to get the PCI address
+		ret = readlink(path, path, sizeof(path));
+		if (ret <= 0)
+			return;
+		path[ret] = 0;
+	}
+	else
+		(void) path_trim_last(path, '/');
+
 	p = path_trim_last(path, '/');
 	if (p && strlen(p) == 12)
 		strcpy(bdf, p);
